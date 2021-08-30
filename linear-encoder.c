@@ -10,22 +10,22 @@
 typedef struct linear_encoder_t {
   uint8_t pin;
   uint8_t value;
+  uint16_t raw_value;
+  uint16_t small_diff, big_diff;
   double max_raw, min_raw;
   uint8_t cycles_till_change, required_repeats;
   long long int loop_delay;
   void (*onchange)(struct linear_encoder_t *encoder);
 } linear_encoder_t;
 
-double linear_encoder_raw_value(linear_encoder_t *encoder) {
+uint16_t linear_encoder_raw_value(linear_encoder_t *encoder) {
   adc_select_input(encoder->pin - 26);
-  double raw = (double)adc_read();
-  if (raw > encoder->max_raw) return encoder->max_raw;
-  if (raw < encoder->min_raw) return encoder->min_raw;
-  return raw;
+  return adc_read();
 }
 
-uint8_t linear_encoder_value(linear_encoder_t *encoder) {
-  double raw = linear_encoder_raw_value(encoder);
+uint8_t linear_encoder_value(linear_encoder_t *encoder, double raw) {
+  if (raw > encoder->max_raw) raw = encoder->max_raw;
+  if (raw < encoder->min_raw) raw = encoder->min_raw;
   double track = encoder->max_raw - encoder->min_raw;
   double pos = raw - encoder->min_raw;
   double value = round((pos/track) * 255);
@@ -33,15 +33,23 @@ uint8_t linear_encoder_value(linear_encoder_t *encoder) {
 }
 
 void linear_encoder_tick(linear_encoder_t *encoder) {
-  uint8_t value = linear_encoder_value(encoder);
-  if (value == encoder->value) {
+  uint16_t raw = linear_encoder_raw_value(encoder);
+  uint16_t old_raw = encoder->raw_value;
+  uint16_t diff = old_raw > raw ? old_raw - raw : raw - old_raw;
+  if (diff < encoder->small_diff) { // short circuit for common case
     encoder->cycles_till_change = encoder->required_repeats;
-  } else if (encoder->cycles_till_change < 1) {
-    encoder->cycles_till_change = encoder->required_repeats;
-    encoder->value = value;
-    encoder->onchange(encoder);
   } else {
-    encoder->cycles_till_change--;
+    uint8_t value = linear_encoder_value(encoder, (double)raw);
+    if (value == encoder->value) {
+      encoder->cycles_till_change = encoder->required_repeats;
+    } else if (diff > encoder->big_diff || encoder->cycles_till_change < 1) {
+      encoder->cycles_till_change = encoder->required_repeats;
+      encoder->value = value;
+      encoder->raw_value = raw;
+      encoder->onchange(encoder);
+    } else {
+      encoder->cycles_till_change--;
+    }
   }
 }
 
@@ -58,11 +66,15 @@ linear_encoder_t * create_encoder(uint8_t pin, void (*onchange)(linear_encoder_t
   encoder->pin = pin;
   encoder->max_raw = 4086;
   encoder->min_raw = 15;
-  encoder->value = linear_encoder_value(encoder);
+  double track = encoder->max_raw - encoder->min_raw;
+  encoder->small_diff = (uint16_t)floor(track/255/3);
+  encoder->big_diff = encoder->small_diff * 5;
+  encoder->raw_value = linear_encoder_raw_value(encoder);
+  encoder->value = linear_encoder_value(encoder, (double)encoder->raw_value);
   encoder->onchange = onchange;
-  encoder->required_repeats = 10;
+  encoder->required_repeats = 5;
   encoder->cycles_till_change = encoder->required_repeats;
-  encoder->loop_delay = 10000; // 10ms
+  encoder->loop_delay = 200000; // 200ms = 5Hz
   add_alarm_in_us(encoder->loop_delay, handle_linear_encoder_alarm, encoder, true);
   return encoder;
 }

@@ -1,6 +1,6 @@
 {
   "name": "pico-linear-encoder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repo": "jkroso/pico-linear-encoder.c",
   "description": "A linear encoder for the Raspberry Pico based on cheap potentiometers",
   "keywords": ["pico", "encoder", "potentiometer", "linear"],
